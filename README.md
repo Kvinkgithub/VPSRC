@@ -29,7 +29,7 @@ chmod +x /usr/local/bin/vpsrc
 vpsrc
 
 📋 Команды
-Цифра	Команда
+
 1	🔄 Обновить
 2	📊 olcRTC — детали
 3	📊 x-ui — детали
