@@ -22,7 +22,7 @@
 🚀 Установка
 
 ```bash
-curl -s https://raw.githubusercontent.com/Kvinkgithub/VPSRC/main/vpsrc.sh -o /usr/local/bin/vpsrc
+curl -s https://raw.githubusercontent.com/Kvinkgithub/VPSRC/master/vpsrc.sh -o /usr/local/bin/vpsrc
 chmod +x /usr/local/bin/vpsrc
 
 ```
