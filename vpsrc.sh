@@ -1,6 +1,7 @@
 #!/bin/bash
 # ============================================================
 # VPS RESOURCES CHECKER by Kvink
+# Версия: 2.0
 # ============================================================
 
 trap 'echo -e "\n👋 Пока!"; exit 0' INT TERM
@@ -38,6 +39,28 @@ logo() {
     echo ""
 }
 
+# --- Функция получения CPU из /proc/stat ---
+get_cpu_usage() {
+    local cpu_line=$(grep '^cpu ' /proc/stat 2>/dev/null)
+    [ -z "$cpu_line" ] && echo "0" && return
+    
+    local user=$(echo "$cpu_line" | awk '{print $2}')
+    local nice=$(echo "$cpu_line" | awk '{print $3}')
+    local system=$(echo "$cpu_line" | awk '{print $4}')
+    local idle=$(echo "$cpu_line" | awk '{print $5}')
+    local iowait=$(echo "$cpu_line" | awk '{print $6}')
+    local irq=$(echo "$cpu_line" | awk '{print $7}')
+    local softirq=$(echo "$cpu_line" | awk '{print $8}')
+    local steal=$(echo "$cpu_line" | awk '{print $9}')
+    [ -z "$steal" ] && steal=0
+    
+    local total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+    [ "$total" -eq 0 ] && echo "0" && return
+    
+    local used=$((total - idle))
+    echo "$((used * 100 / total))"
+}
+
 # --- Полоска ---
 draw_bar() {
     local percent=$1
@@ -46,38 +69,29 @@ draw_bar() {
     [ "$filled" -gt "$width" ] && filled=$width
     [ "$filled" -lt 0 ] && filled=0
     local empty=$((width - filled))
-
-    if [ "$filled" -gt 0 ]; then
-        printf "%${filled}s" | tr ' ' '#'
-    fi
-    if [ "$empty" -gt 0 ]; then
-        printf "%${empty}s" | tr ' ' '-'
-    fi
+    [ "$filled" -gt 0 ] && printf "%${filled}s" | tr ' ' '#'
+    [ "$empty" -gt 0 ] && printf "%${empty}s" | tr ' ' '-'
 }
 
 # --- Показываем CPU ---
 show_cpu() {
     local load=$(uptime | awk -F'load average:' '{print $2}' | xargs)
     echo -e "  ${Y}▸ Нагрузка:${N} $load"
-
-    local idle=$(top -bn1 2>/dev/null | grep "Cpu(s)" | awk '{print $8}' | cut -d'%' -f1)
-    if [ -n "$idle" ]; then
-        local used=$(echo "100 - $idle" | bc 2>/dev/null || echo "0")
-        used=$(printf "%.0f" "$used" 2>/dev/null || echo "0")
-
-        if [ "$used" -lt 30 ]; then
-            color=$G; emoji="🟢"
-        elif [ "$used" -lt 60 ]; then
-            color=$Y; emoji="🟡"
-        else
-            color=$R; emoji="🔴"
-        fi
-
-        local bar=$(draw_bar "$used")
-        echo -e "  ${Y}▸ CPU:${N} ${color}${bar}${N} ${color}${used}%${N} $emoji"
+    
+    local used=$(get_cpu_usage)
+    [ -z "$used" ] && used=0
+    local used_int=$((used))
+    
+    if [ "$used_int" -lt 30 ]; then
+        color=$G; emoji="🟢"
+    elif [ "$used_int" -lt 60 ]; then
+        color=$Y; emoji="🟡"
     else
-        echo -e "  ${Y}▸ CPU:${N} Нет данных"
+        color=$R; emoji="🔴"
     fi
+    
+    local bar=$(draw_bar "$used_int")
+    echo -e "  ${Y}▸ CPU:${N} ${color}${bar}${N} ${color}${used}%${N} $emoji"
 }
 
 # --- Показываем память ---
@@ -85,22 +99,11 @@ show_mem() {
     local total=$(free -m | awk '/^Mem:/{print $2}')
     local used=$(free -m | awk '/^Mem:/{print $3}')
     local free=$(free -m | awk '/^Mem:/{print $4}')
-    local available=$(free -m | awk '/^Mem:/{print $7}')
+    local avail=$(free -m | awk '/^Mem:/{print $7}')
     local percent=$((used * 100 / total))
     [ "$percent" -lt 0 ] && percent=0
     [ "$percent" -gt 100 ] && percent=100
-
-    # Swap
-    local swap_total=$(free -m | awk '/^Swap:/{print $2}')
-    local swap_used=$(free -m | awk '/^Swap:/{print $3}')
-    local swap_free=$(free -m | awk '/^Swap:/{print $4}')
-    local swap_percent=0
-    if [ "$swap_total" -gt 0 ]; then
-        swap_percent=$((swap_used * 100 / swap_total))
-        [ "$swap_percent" -lt 0 ] && swap_percent=0
-        [ "$swap_percent" -gt 100 ] && swap_percent=100
-    fi
-
+    
     if [ "$percent" -lt 30 ]; then
         color=$G; emoji="🟢"
     elif [ "$percent" -lt 60 ]; then
@@ -108,26 +111,33 @@ show_mem() {
     else
         color=$R; emoji="🔴"
     fi
-
+    
     local bar=$(draw_bar "$percent")
     echo -e "  ${Y}▸ Память:${N} ${color}${bar}${N} ${color}${used}MB / ${total}MB (${percent}%)${N} $emoji"
-    echo -e "  ${DM}    доступно: ${available}MB | свободно: ${free}MB${N}"
+    echo -e "  ${DM}      доступно: ${avail}MB | свободно: ${free}MB${N}"
+}
 
-    # Swap
-    if [ "$swap_total" -gt 0 ]; then
-        if [ "$swap_percent" -lt 30 ]; then
-            scolor=$G; semoji="🟢"
-        elif [ "$swap_percent" -lt 60 ]; then
-            scolor=$Y; semoji="🟡"
-        else
-            scolor=$R; semoji="🔴"
-        fi
-        local sbar=$(draw_bar "$swap_percent")
-        echo -e "  ${Y}▸ Swap:${N} ${scolor}${sbar}${N} ${scolor}${swap_used}MB / ${swap_total}MB (${swap_percent}%)${N} $semoji"
-        echo -e "  ${DM}    свободно: ${swap_free}MB${N}"
+# --- Swap ---
+show_swap() {
+    local total=$(free -m | awk '/^Swap:/{print $2}')
+    [ "$total" -eq 0 ] && return
+    local used=$(free -m | awk '/^Swap:/{print $3}')
+    local free=$(free -m | awk '/^Swap:/{print $4}')
+    local percent=$((used * 100 / total))
+    [ "$percent" -lt 0 ] && percent=0
+    [ "$percent" -gt 100 ] && percent=100
+    
+    if [ "$percent" -lt 30 ]; then
+        color=$G; emoji="🟢"
+    elif [ "$percent" -lt 60 ]; then
+        color=$Y; emoji="🟡"
     else
-        echo -e "  ${DM}▸ Swap: не используется${N}"
+        color=$R; emoji="🔴"
     fi
+    
+    local bar=$(draw_bar "$percent")
+    echo -e "  ${Y}▸ Swap:${N} ${color}${bar}${N} ${color}${used}MB / ${total}MB (${percent}%)${N} $emoji"
+    echo -e "  ${DM}      свободно: ${free}MB${N}"
 }
 
 # --- Показываем диск ---
@@ -139,7 +149,7 @@ show_disk() {
     [ -z "$percent" ] && percent=0
     [ "$percent" -lt 0 ] && percent=0
     [ "$percent" -gt 100 ] && percent=100
-
+    
     if [ "$percent" -lt 60 ]; then
         color=$G; emoji="🟢"
     elif [ "$percent" -lt 80 ]; then
@@ -147,24 +157,24 @@ show_disk() {
     else
         color=$R; emoji="🔴"
     fi
-
+    
     local bar=$(draw_bar "$percent")
     echo -e "  ${Y}▸ Диск:${N} ${color}${bar}${N} ${color}${used} / ${total} (${percent}%)${N} $emoji"
-    echo -e "  ${DM}    свободно: ${free}${N}"
+    echo -e "  ${DM}      свободно: ${free}${N}"
 }
 
-# --- Топ процессов ---
+# --- Топ процессов (игнорируем сам ps aux) ---
 show_top() {
     echo ""
     echo -e "  ${Y}▸ Кто жрёт CPU:${N}"
     echo -e "  ${DM}  %CPU  %MEM  ПРОЦЕСС${N}"
-
-    ps aux --sort=-%cpu 2>/dev/null | head -6 | tail -5 | while read line; do
+    
+    ps aux --sort=-%cpu 2>/dev/null | grep -v "ps aux" | head -6 | tail -5 | while read line; do
         local cpu=$(echo "$line" | awk '{printf "%.1f", $3}')
         local mem=$(echo "$line" | awk '{printf "%.1f", $4}')
-        local cmd=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}' | cut -c1-35)
-        cmd=$(echo "$cmd" | sed 's/\/usr\/local\/bin\///g' | sed 's/\/usr\/bin\///g')
-
+        local cmd=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}' | cut -c1-30)
+        cmd=$(echo "$cmd" | sed 's/\/usr\/local\/bin\///g' | sed 's/\/usr\/bin\///g' | cut -c1-30)
+        
         if (( $(echo "$cpu > 10" | bc -l 2>/dev/null) )); then
             color=$R
         elif (( $(echo "$cpu > 3" | bc -l 2>/dev/null) )); then
@@ -172,7 +182,7 @@ show_top() {
         else
             color=$N
         fi
-
+        
         printf "  ${color}%6s%%${N}  %5s%%  %s\n" "$cpu" "$mem" "$cmd"
     done
 }
@@ -182,11 +192,11 @@ show_processes() {
     local olc_count=$(ps aux | grep -c '[o]lcrtc' 2>/dev/null || echo "0")
     local olc_cpu=$(ps aux | grep '[o]lcrtc' 2>/dev/null | awk '{sum+=$3} END {printf "%.1f", sum}' || echo "0")
     local olc_mem=$(ps aux | grep '[o]lcrtc' 2>/dev/null | awk '{sum+=$6} END {printf "%.1f", sum/1024}' || echo "0")
-
+    
     local xui_count=$(ps aux | grep -c '[x]-ui' 2>/dev/null || echo "0")
     local xui_cpu=$(ps aux | grep '[x]-ui' 2>/dev/null | awk '{sum+=$3} END {printf "%.1f", sum}' || echo "0")
     local xui_mem=$(ps aux | grep '[x]-ui' 2>/dev/null | awk '{sum+=$6} END {printf "%.1f", sum/1024}' || echo "0")
-
+    
     echo ""
     if [ "$olc_count" -gt 0 ]; then
         echo -e "  ${M}▸ olcRTC:${N} ${olc_count} процессов, ${olc_cpu}% CPU, ${olc_mem}MB памяти"
@@ -222,16 +232,16 @@ details_olcrtc() {
     echo -e "  ${W}📊 olcRTC — детали${N}"
     echo -e "  ${DM}─────────────────────────${N}"
     echo ""
-
+    
     local count=$(ps aux | grep -c '[o]lcrtc' 2>/dev/null || echo "0")
     local cpu=$(ps aux | grep '[o]lcrtc' 2>/dev/null | awk '{sum+=$3} END {printf "%.1f", sum}' || echo "0")
     local mem=$(ps aux | grep '[o]lcrtc' 2>/dev/null | awk '{sum+=$6} END {printf "%.1f", sum/1024}' || echo "0")
-
+    
     echo -e "  ${Y}Всего:${N} $count процессов"
     echo -e "  ${Y}CPU:${N} $cpu%"
     echo -e "  ${Y}Память:${N} $mem MB"
     echo ""
-
+    
     if [ "$count" -gt 0 ]; then
         ps aux | grep '[o]lcrtc' 2>/dev/null | grep -v grep | while read line; do
             local pid=$(echo "$line" | awk '{print $2}')
@@ -244,7 +254,7 @@ details_olcrtc() {
     else
         echo -e "  ${DM}Нет запущенных процессов${N}"
     fi
-
+    
     echo ""
     echo -n "  Нажми Enter чтобы вернуться... "
     read -r
@@ -258,16 +268,16 @@ details_xui() {
     echo -e "  ${W}📊 x-ui — детали${N}"
     echo -e "  ${DM}─────────────────────────${N}"
     echo ""
-
+    
     local count=$(ps aux | grep -c '[x]-ui' 2>/dev/null || echo "0")
     local cpu=$(ps aux | grep '[x]-ui' 2>/dev/null | awk '{sum+=$3} END {printf "%.1f", sum}' || echo "0")
     local mem=$(ps aux | grep '[x]-ui' 2>/dev/null | awk '{sum+=$6} END {printf "%.1f", sum/1024}' || echo "0")
-
+    
     echo -e "  ${Y}Всего:${N} $count процессов"
     echo -e "  ${Y}CPU:${N} $cpu%"
     echo -e "  ${Y}Память:${N} $mem MB"
     echo ""
-
+    
     if [ "$count" -gt 0 ]; then
         ps aux | grep '[x]-ui' 2>/dev/null | grep -v grep | while read line; do
             local pid=$(echo "$line" | awk '{print $2}')
@@ -280,7 +290,7 @@ details_xui() {
     else
         echo -e "  ${DM}Нет запущенных процессов${N}"
     fi
-
+    
     echo ""
     echo -e "  ${Y}▸ Атаки на x-ui (за 2 дня):${N}"
     local attacks=$(journalctl --since "2 days ago" -u x-ui 2>/dev/null | grep -c "TLS handshake error" 2>/dev/null || echo "0")
@@ -293,7 +303,7 @@ details_xui() {
     else
         echo -e "  ${G}✅ Атак не обнаружено${N}"
     fi
-
+    
     echo ""
     echo -n "  Нажми Enter чтобы вернуться... "
     read -r
@@ -307,15 +317,15 @@ show_history() {
     echo -e "  ${W}📋 История за сегодня${N}"
     echo -e "  ${DM}─────────────────────────${N}"
     echo ""
-
+    
     local today=$(date +%Y%m%d)
     local log="$LOG_DIR/cpu_${today}.log"
-
+    
     if [ -f "$log" ]; then
         echo -e "  ${DM}📁 $log${N}"
         echo ""
         echo -e "  ${Y}Последние записи:${N}"
-
+        
         tail -20 "$log" 2>/dev/null | while read line; do
             if [[ "$line" =~ ^\[.*\]$ ]]; then
                 echo -e "  ${C}${line}${N}"
@@ -330,7 +340,7 @@ show_history() {
     else
         echo -e "  ${Y}⏳ Лог ещё не создан. Подожди 5-10 минут.${N}"
     fi
-
+    
     echo ""
     echo -n "  Нажми Enter чтобы вернуться... "
     read -r
@@ -344,7 +354,7 @@ check_gpu() {
     echo -e "  ${W}🖥️  GPU — диагностика${N}"
     echo -e "  ${DM}─────────────────────────${N}"
     echo ""
-
+    
     echo -e "  ${Y}▸ /dev/dri/:${N}"
     if [ -d "/dev/dri" ]; then
         echo -e "  ${R}⚠️  /dev/dri/ существует!${N}"
@@ -355,7 +365,7 @@ check_gpu() {
         echo -e "  ${G}✅ /dev/dri/ не найден. GPU отключен.${N}"
     fi
     echo ""
-
+    
     echo -e "  ${Y}▸ Ошибки virtio_gpu:${N}"
     local errors=$(dmesg -T 2>/dev/null | grep -c "virtio_gpu.*failed" 2>/dev/null || echo "0")
     if [ "$errors" -gt 0 ]; then
@@ -367,7 +377,7 @@ check_gpu() {
         echo -e "  ${G}✅ Ошибок нет${N}"
     fi
     echo ""
-
+    
     echo -e "  ${Y}▸ Параметры загрузки:${N}"
     if cat /proc/cmdline 2>/dev/null | grep -q "nomodeset"; then
         echo -e "  ${G}✅ nomodeset активен${N}"
@@ -377,7 +387,7 @@ check_gpu() {
         echo -e "  ${DM}  sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=\"[^\"]*/& nomodeset/' /etc/default/grub${N}"
         echo -e "  ${DM}  update-grub && reboot${N}"
     fi
-
+    
     echo ""
     echo -n "  Нажми Enter чтобы вернуться... "
     read -r
@@ -389,12 +399,13 @@ main() {
         logo
         show_cpu
         show_mem
+        show_swap
         show_disk
         show_top
         show_processes
         menu
         read -r choice
-
+        
         case "$choice" in
             1) continue ;;
             2) details_olcrtc ;;
