@@ -2,7 +2,7 @@
 
 Простой и красивый мониторинг ресурсов для VPS. Работает из коробки.
 
-![Version](https://img.shields.io/badge/version-1.0-brightgreen)
+![Version](https://img.shields.io/badge/version-2.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Linux-blue)
 ![GitHub](https://img.shields.io/badge/license-MIT-green)
 
@@ -14,7 +14,7 @@
 - 📱 Статистика по olcRTC и x-ui
 - 🛡️ Атаки на x-ui (TLS handshake)
 - 🖥️ Диагностика GPU (drm/virtio_gpu)
-- 📜 История за сегодня и вчера
+- 📜 История за сегодня
 - 🎨 Красивый и понятный интерфейс
 
 ---
@@ -28,8 +28,9 @@ chmod +x /usr/local/bin/vpsrc
 ```
 
 🎯 Запуск
-
+```
 vpsrc
+```
 
 📋 Команды
 
@@ -55,6 +56,7 @@ vpsrc
 cat /var/log/cpu_monitor/cpu_$(date +%Y%m%d).log
 
 📦 Требования
+
 Linux
 
 bash
@@ -62,9 +64,10 @@ bash
 curl (для установки)
 
 👤 Автор
-Kvink
 
 GitHub: Kvinkgithub
 
 📄 Лицензия
-MIT
+
+<a id="myhref" href="https://github.com/Kvinkgithub/VPSRC/blob/master/LICENSE">MIT</a>
+
